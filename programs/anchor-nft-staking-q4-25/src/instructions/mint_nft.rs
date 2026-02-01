@@ -30,7 +30,7 @@ pub struct MintNft<'info> {
         seeds = [b"collection_info", collection.key().as_ref()],
         bump = collection_info.bump,
     )]
-    pub collection_info: Account<'info, CollectionInfo>,
+    pub collection_info: Box<Account<'info, CollectionInfo>>,
 
     #[account(address = CORE_PROGRAM_ID)]
     /// CHECK: Verified by address constraint
