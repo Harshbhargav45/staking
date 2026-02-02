@@ -5,15 +5,32 @@ package_manager = "yarn"
 resolution = true
 skip-lint = false
 
-[programs.localnet]
-anchor_nft_staking_q4_25 = "5GHE3iiDCUpdm3PSkb6FSTmb4JAv3s5zJYP6bPAG58fZ"
+[programs.devnet]
+anchor_nft_staking_q4_25 = "G3V74MRcYqcqkgEn68eCaEzXh39RVCfvemGotwc2GU3f"
 
 [registry]
-url = "https://api.apr.dev"
+url = "https://api.devnet.solana.com"
 
 [provider]
-cluster = "localnet"
+cluster = "devnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
 test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 \"tests/**/*.ts\""
+
+[test]
+startup_wait = 5000
+shutdown_wait = 2000
+upgradeable = false
+
+[test.validator]
+bind_address = "0.0.0.0"
+url = "http://localhost:8899"
+ledger = ".anchor/test-ledger"
+rpc_port = 8899
+
+[[test.validator.clone]]
+address = "CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d"
+
+[[test.validator.clone]]
+address = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"

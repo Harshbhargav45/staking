@@ -1,7 +1,7 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { AnchorNftStakingQ425 } from "../target/types/anchor_nft_staking_q4_25";
-import { PublicKey, Keypair, SystemProgram } from "@solana/web3.js";
+import { PublicKey, Keypair, SystemProgram, Transaction } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { MPL_CORE_PROGRAM_ID } from "@metaplex-foundation/mpl-core";
 import { assert } from "chai";
@@ -17,6 +17,7 @@ describe("anchor-nft-staking-q4-25", () => {
   // Accounts
   const admin = provider.wallet;
   const user = Keypair.generate();
+  const user2 = Keypair.generate();
   const collection = Keypair.generate();
   const asset = Keypair.generate();
 
@@ -39,8 +40,22 @@ describe("anchor-nft-staking-q4-25", () => {
   console.log(`Asset: ${asset.publicKey.toString()}`);
 
   before(async () => {
-    // Airdrop to user
-    await connection.requestAirdrop(user.publicKey, 5_000_000_000); // 5 SOL
+    // Transfer SOL from admin to users (devnet - avoid airdrop rate limits)
+    const transferTx = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: admin.publicKey,
+        toPubkey: user.publicKey,
+        lamports: 10_000_000, // 0.01 SOL
+      }),
+      SystemProgram.transfer({
+        fromPubkey: admin.publicKey,
+        toPubkey: user2.publicKey,
+        lamports: 10_000_000, // 0.01 SOL
+      })
+    );
+
+    await provider.sendAndConfirm(transferTx);
+    console.log("Transferred 0.01 SOL to each user");
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
     // Derive PDAs
@@ -83,20 +98,27 @@ describe("anchor-nft-staking-q4-25", () => {
 
   describe("Initialize Config", () => {
     it("Initialize the staking config", async () => {
-      const tx = await program.methods
-        .initializeConfig(pointsPerStake, maxStake, freezePeriod)
-        .accountsStrict({
-          admin: admin.publicKey,
-          config: configPda,
-          rewardMint: rewardMintPda,
-          tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
-          systemProgram: SystemProgram.programId,
-        })
-        .rpc();
+      let config;
+      try {
+        config = await program.account.stakeConfig.fetch(configPda);
+        console.log("Config already initialized");
+      } catch (e) {
+        // Config not initialized, proceed to initialize
+        const tx = await program.methods
+          .initializeConfig(pointsPerStake, maxStake, freezePeriod)
+          .accountsStrict({
+            admin: admin.publicKey,
+            config: configPda,
+            rewardMint: rewardMintPda,
+            tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc();
 
-      console.log(`Initialize Config tx: ${tx}`);
+        console.log(`Initialize Config tx: ${tx}`);
+        config = await program.account.stakeConfig.fetch(configPda);
+      }
 
-      const config = await program.account.stakeConfig.fetch(configPda);
       assert.equal(config.pointsPerStake, pointsPerStake);
       assert.equal(config.maxStake, maxStake);
       assert.equal(config.freezePeriod, freezePeriod);
@@ -204,6 +226,7 @@ describe("anchor-nft-staking-q4-25", () => {
           user: user.publicKey,
           asset: asset.publicKey,
           collection: collection.publicKey,
+          collectionInfo: collectionInfoPda,
           stakeAccount: stakeAccountPda,
           config: configPda,
           userAccount: userAccountPda,
@@ -231,6 +254,33 @@ describe("anchor-nft-staking-q4-25", () => {
   });
 
   describe("Unstake NFT", () => {
+    it("Should fail if unauthorized user tries to unstake", async () => {
+      try {
+        await program.methods
+          .unstake()
+          .accountsStrict({
+            user: user2.publicKey,
+            asset: asset.publicKey,
+            collection: collection.publicKey,
+            collectionInfo: collectionInfoPda,
+            stakeAccount: stakeAccountPda,
+            config: configPda,
+            userAccount: userAccountPda,
+            coreProgram: MPL_CORE_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([user2])
+          .rpc();
+        assert.fail("Should have failed with NotOwner error");
+      } catch (err) {
+        // The error could be NotOwner or a constraint failure
+        assert.ok(
+          err.message.includes("NotOwner") || err.message.includes("constraint"),
+          `Expected NotOwner or constraint error, got: ${err.message}`
+        );
+      }
+    });
+
     it("Unstake the NFT and remove FreezeDelegate plugin", async () => {
       // Wait for freeze period if needed (0 in this test)
       if (freezePeriod > 0) {
@@ -249,6 +299,7 @@ describe("anchor-nft-staking-q4-25", () => {
           user: user.publicKey,
           asset: asset.publicKey,
           collection: collection.publicKey,
+          collectionInfo: collectionInfoPda,
           stakeAccount: stakeAccountPda,
           config: configPda,
           userAccount: userAccountPda,
@@ -276,8 +327,7 @@ describe("anchor-nft-staking-q4-25", () => {
       // Points should be awarded (time_elapsed * points_per_stake)
       assert.ok(userAccountAfter.points >= pointsBefore);
       console.log(
-        `NFT unstaked successfully, points earned: ${
-          userAccountAfter.points - pointsBefore
+        `NFT unstaked successfully, points earned: ${userAccountAfter.points - pointsBefore
         }`
       );
     });

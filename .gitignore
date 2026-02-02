@@ -10,3 +10,25 @@ test-ledger
 *-keypair.json
 **/*.so
 .env
+
+# Test output files
+*.txt
+**/*.txt
+test_*.txt
+*_log*.txt
+FINAL*.txt
+ALL_TESTS*.txt
+
+# Keypair files
+*.json
+!package.json
+!tsconfig.json
+!Anchor.toml
+
+# Ledger and logs
+test-ledger/
+.anchor/
+
+# Temporary files
+temp_*
+*.tmp

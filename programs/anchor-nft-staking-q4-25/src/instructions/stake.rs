@@ -7,7 +7,7 @@ use mpl_core::{
 
 use crate::{
     errors::StakeError,
-    state::{StakeAccount, StakeConfig, UserAccount},
+    state::{StakeAccount, StakeConfig, UserAccount, CollectionInfo},
 };
 
 #[derive(Accounts)]
@@ -23,10 +23,18 @@ pub struct Stake<'info> {
     pub asset: UncheckedAccount<'info>,
 
     #[account(
+        mut,
         constraint = collection.owner == &CORE_PROGRAM_ID @ StakeError::InvalidCollection,
     )]
     /// CHECK: Metaplex Core Collection
     pub collection: UncheckedAccount<'info>,
+
+    #[account(
+        mut,
+        seeds = [b"collection_info", collection.key().as_ref()],
+        bump = collection_info.bump,
+    )]
+    pub collection_info: Account<'info, CollectionInfo>,
 
     #[account(
         init,
@@ -69,6 +77,7 @@ impl<'info> Stake<'info> {
             staked_at: Clock::get()?.unix_timestamp,
             bump: bumps.stake_account,
         });
+
 
         AddPluginV1CpiBuilder::new(&self.core_program.to_account_info())
             .asset(&self.asset.to_account_info())

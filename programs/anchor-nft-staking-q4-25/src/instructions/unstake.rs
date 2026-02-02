@@ -1,13 +1,13 @@
 use anchor_lang::prelude::*;
 use mpl_core::{
-    instructions::RemovePluginV1CpiBuilder,
-    types::PluginType,
+    instructions::{RemovePluginV1CpiBuilder, UpdatePluginV1CpiBuilder},
+    types::{PluginType, FreezeDelegate, Plugin},
     ID as CORE_PROGRAM_ID,
 };
 
 use crate::{
     errors::StakeError,
-    state::{StakeAccount, StakeConfig, UserAccount},
+    state::{StakeAccount, StakeConfig, UserAccount, CollectionInfo},
 };
 
 #[derive(Accounts)]
@@ -23,6 +23,7 @@ pub struct Unstake<'info> {
     pub asset: UncheckedAccount<'info>,
 
     #[account(
+        mut,
         constraint = collection.owner == &CORE_PROGRAM_ID @ StakeError::InvalidCollection,
     )]
     /// CHECK: Metaplex Core Collection
@@ -30,9 +31,17 @@ pub struct Unstake<'info> {
 
     #[account(
         mut,
+        seeds = [b"collection_info", collection.key().as_ref()],
+        bump = collection_info.bump,
+    )]
+    pub collection_info: Account<'info, CollectionInfo>,
+
+    #[account(
+        mut,
         close = user,
         seeds = [b"stake", config.key().as_ref(), asset.key().as_ref()],
         bump = stake_account.bump,
+        constraint = stake_account.owner == user.key() @ StakeError::NotOwner,
     )]
     pub stake_account: Box<Account<'info, StakeAccount>>,
 
@@ -64,12 +73,25 @@ impl<'info> Unstake<'info> {
             StakeError::FreezePeriodNotPassed
         );
 
-        self.user_account.points +=
-            ((time_elapsed as u32) / 86400) * self.config.points_per_stake as u32;
+        self.user_account.points += ((time_elapsed as u32) * self.config.points_per_stake as u32) / 86400;
 
+
+        // First, unfreeze the asset by updating the plugin
+        mpl_core::instructions::UpdatePluginV1CpiBuilder::new(&self.core_program.to_account_info())
+            .asset(&self.asset.to_account_info())
+            .collection(Some(&self.collection.to_account_info()))
+            .payer(&self.user.to_account_info())
+            .authority(Some(&self.user.to_account_info()))
+            .system_program(&self.system_program.to_account_info())
+            .plugin(Plugin::FreezeDelegate(FreezeDelegate { frozen: false }))
+            .invoke()?;
+
+        // Then remove the plugin
         RemovePluginV1CpiBuilder::new(&self.core_program.to_account_info())
             .asset(&self.asset.to_account_info())
             .collection(Some(&self.collection.to_account_info()))
+            .payer(&self.user.to_account_info())
+            .authority(Some(&self.user.to_account_info()))
             .system_program(&self.system_program.to_account_info())
             .plugin_type(PluginType::FreezeDelegate)
             .invoke()?;
