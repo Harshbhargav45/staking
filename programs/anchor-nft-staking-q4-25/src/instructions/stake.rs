@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use mpl_core::{
     instructions::AddPluginV1CpiBuilder,
-    types::{FreezeDelegate, Plugin},
+    types::{FreezeDelegate, Plugin, PluginAuthority},
     ID as CORE_PROGRAM_ID,
 };
 
@@ -78,13 +78,19 @@ impl<'info> Stake<'info> {
             bump: bumps.stake_account,
         });
 
+        let stake_pda_key = self.stake_account.key();
 
+        // AddPlugin is authorized by the asset owner (user).
+        // The stake PDA is registered as the FreezeDelegate plugin's authority via init_authority
+        // so only the program (signing as the stake PDA) can later unfreeze or remove it.
         AddPluginV1CpiBuilder::new(&self.core_program.to_account_info())
             .asset(&self.asset.to_account_info())
             .collection(Some(&self.collection.to_account_info()))
             .payer(&self.user.to_account_info())
+            .authority(Some(&self.user.to_account_info()))
             .system_program(&self.system_program.to_account_info())
             .plugin(Plugin::FreezeDelegate(FreezeDelegate { frozen: true }))
+            .init_authority(PluginAuthority::Address { address: stake_pda_key })
             .invoke()?;
 
         self.user_account.amount_staked += 1;

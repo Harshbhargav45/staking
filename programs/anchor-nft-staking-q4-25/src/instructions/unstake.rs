@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 use mpl_core::{
-    instructions::{RemovePluginV1CpiBuilder, UpdatePluginV1CpiBuilder},
+    instructions::RemovePluginV1CpiBuilder,
     types::{PluginType, FreezeDelegate, Plugin},
     ID as CORE_PROGRAM_ID,
 };
@@ -68,25 +68,33 @@ impl<'info> Unstake<'info> {
     pub fn unstake(&mut self) -> Result<()> {
         let time_elapsed = Clock::get()?.unix_timestamp - self.stake_account.staked_at;
 
+        // Fix 2: compare elapsed days, not raw seconds, against freeze_period
         require!(
-            time_elapsed >= self.config.freeze_period as i64,
+            time_elapsed / 86400 >= self.config.freeze_period as i64,
             StakeError::FreezePeriodNotPassed
         );
 
         self.user_account.points += ((time_elapsed as u32) * self.config.points_per_stake as u32) / 86400;
 
+        let signer_seeds: &[&[&[u8]]] = &[&[
+            b"stake",
+            self.config.to_account_info().key.as_ref(),
+            self.asset.to_account_info().key.as_ref(),
+            &[self.stake_account.bump],
+        ]];
 
-        // First, unfreeze the asset by updating the plugin
+        // Fix 3: unfreeze with stake PDA as authority (it was set as init_authority at stake time)
         mpl_core::instructions::UpdatePluginV1CpiBuilder::new(&self.core_program.to_account_info())
             .asset(&self.asset.to_account_info())
             .collection(Some(&self.collection.to_account_info()))
             .payer(&self.user.to_account_info())
-            .authority(Some(&self.user.to_account_info()))
+            .authority(Some(&self.stake_account.to_account_info()))
             .system_program(&self.system_program.to_account_info())
             .plugin(Plugin::FreezeDelegate(FreezeDelegate { frozen: false }))
-            .invoke()?;
+            .invoke_signed(signer_seeds)?;
 
-        // Then remove the plugin
+        // Remove the FreezeDelegate plugin — RemovePlugin requires the asset owner (user), not
+        // the plugin's registered authority. The plugin was already unfrozen above.
         RemovePluginV1CpiBuilder::new(&self.core_program.to_account_info())
             .asset(&self.asset.to_account_info())
             .collection(Some(&self.collection.to_account_info()))
